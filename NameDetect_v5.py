@@ -79,16 +79,24 @@ def preprocess_for_ocr_from_bytes(image_bytes: bytes) -> np.ndarray:
 def is_probable_name(text: str) -> bool:
     text = text.strip()
 
+    # Basic length filter
     if len(text) < 3:
         return False
+
+    # Must contain at least one letter
     if not any(c.isalpha() for c in text):
         return False
+
+    # Disallow obvious non-name patterns
     if "/" in text:
         return False
-    if any(c.isspace() for c in text):
+
+    # If there are MANY spaces, it's probably a phrase, not a name
+    if text.count(" ") > 1:
         return False
 
     return True
+
 
 
 def normalize_ocr_name(text: str) -> str:
@@ -98,12 +106,20 @@ def normalize_ocr_name(text: str) -> str:
     if not n:
         return n
 
+    # Remove all whitespace inside (so "Archery202 1" -> "Archery2021")
+    n = re.sub(r"\s+", "", n)
+
+    # If it starts with a digit followed by letters somewhere, drop the first digit
     if len(n) >= 2 and n[0].isdigit() and any(c.isalpha() for c in n[1:]):
         n = n[1:]
 
+    # Collapse character spam: "xxxx" -> "xx"
     n = re.sub(r"(.)\1{2,}", r"\1\1", n)
+
+    # Capitalize first letter
     n = n[0].upper() + n[1:]
     return n
+
 
 
 def extract_names_from_bytes(image_bytes: bytes):
@@ -364,27 +380,61 @@ async def ping(ctx: commands.Context):
         unique_names.append(n)
 
     # ---- MATCH NAMES TO GUILD MEMBERS & TAG THEM (with roster correction) ----
-    matched_lines = []
-    unmatched_lines = []
+    # Aggregate by member so each user is only tagged once.
+    member_hits = {}   # member_id -> {"member": discord.Member, "raw": set(), "corrected": set()}
+    unmatched = []     # list of (raw_name, corrected_name)
 
     for n in unique_names:
         corrected = correct_with_roster(n)
         member = await find_best_member_for_name(ctx.guild, corrected)
 
         if member:
-            # Short, concise format
-            if corrected != n:
-                line = f"`{n}`→`{corrected}`→{member.mention}"
+            entry = member_hits.setdefault(
+                member.id,
+                {"member": member, "raw": set(), "corrected": set()},
+            )
+            entry["raw"].add(n)
+            entry["corrected"].add(corrected)
+        else:
+            unmatched.append((n, corrected))
+
+    matched_lines = []
+
+    # Build one line per member (one @mention max)
+    for entry in member_hits.values():
+        member = entry["member"]
+        raw_names = sorted(entry["raw"])
+        corrected_names = sorted(entry["corrected"])
+
+        # Usually there’ll be a single corrected name
+        if len(corrected_names) == 1:
+            corrected = corrected_names[0]
+            # Remove duplicates where raw == corrected (case-insensitive)
+            raw_unique = [
+                r for r in raw_names if r.lower() != corrected.lower()
+            ]
+            if raw_unique:
+                raw_str = ", ".join(f"`{r}`" for r in raw_unique)
+                line = f"{raw_str}→`{corrected}`→{member.mention}"
             else:
                 line = f"`{corrected}`→{member.mention}"
-            matched_lines.append(line)
         else:
-            # Short unmatched format
-            if corrected != n:
-                line = f"`{n}`→`{corrected}` (no match)"
-            else:
-                line = f"`{n}` (no match)"
-            unmatched_lines.append(line)
+            # Edge case: multiple corrected names pointing to same member
+            corr_str = ", ".join(f"`{c}`" for c in corrected_names)
+            raw_str = ", ".join(f"`{r}`" for r in raw_names)
+            line = f"{raw_str}→{corr_str}→{member.mention}"
+
+        matched_lines.append(line)
+
+    # Now build unmatched_lines as before, but from our aggregated list
+    unmatched_lines = []
+    for raw_name, corrected in unmatched:
+        if corrected != raw_name:
+            line = f"`{raw_name}`→`{corrected}` (no match)"
+        else:
+            line = f"`{raw_name}` (no match)"
+        unmatched_lines.append(line)
+
 
     MAX_DISPLAY = 60  # total lines (matched + unmatched) to keep things short
     display_matched = matched_lines[:MAX_DISPLAY]
@@ -395,8 +445,9 @@ async def ping(ctx: commands.Context):
     extra_unmatched = len(unmatched_lines) - len(display_unmatched)
 
     response_parts = []
+    total_matched_members = len(member_hits)
     response_parts.append(
-        f"**Detected {len(unique_names)} unique name(s) from {len(image_entries)} image(s).**"
+        f"**Detected {total_matched_members} matched player(s) from {len(image_entries)} image(s).**"
     )
 
     if display_matched:
