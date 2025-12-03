@@ -15,6 +15,11 @@ import numpy as np
 import difflib
 from openpyxl import load_workbook  # For MEMBERLIST.xlsx
 
+# Google Sheets imports
+from googleapiclient.discovery import build
+from google.auth.transport.requests import Request
+from google.oauth2.credentials import Credentials
+
 load_dotenv()
 
 # ========= OCR CONFIG =========
@@ -22,6 +27,22 @@ LANGS = ["en"]
 MIN_CONF = 0.3
 SCALE = 2.0
 # ==============================
+
+# ========= GOOGLE SHEETS CONFIG =========
+# This must match the scope in your token.json
+GSHEETS_SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
+
+# From your Sheet URL: https://docs.google.com/spreadsheets/d/SPREADSHEET_ID/edit#gid=...
+GSHEETS_SPREADSHEET_ID = os.getenv("GSHEETS_SPREADSHEET_ID")
+
+# Must match your tab and header in the sheet
+GSHEETS_SHEET_NAME = "Data Validation"
+GSHEETS_COLUMN_HEADER = "Player IGM"
+
+# Resolve token.json relative to this script file
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+GSHEETS_TOKEN_FILE = os.path.join(BASE_DIR, "token.json")
+# ========================================
 
 # -------- Intents --------
 intents = discord.Intents.default()
@@ -98,7 +119,6 @@ def is_probable_name(text: str) -> bool:
     return True
 
 
-
 def normalize_ocr_name(text: str) -> str:
     n = text.strip().strip("[]{}()<>|\"'`.,;:!?")
     n = re.sub(r"^[^A-Za-z0-9]+", "", n)
@@ -119,7 +139,6 @@ def normalize_ocr_name(text: str) -> str:
     # Capitalize first letter
     n = n[0].upper() + n[1:]
     return n
-
 
 
 def extract_names_from_bytes(image_bytes: bytes):
@@ -168,6 +187,97 @@ def normalize_for_match(s: str) -> str:
 
 ROSTER_NAMES = []          # raw names from roster
 ROSTER_NORM_MAP = {}       # normalized_name -> original_name
+
+
+def get_gsheets_creds():
+    """
+    Load credentials from token.json and refresh if needed.
+    Assumes token.json is in the same directory as this script.
+    """
+    creds = None
+    if os.path.exists(GSHEETS_TOKEN_FILE):
+        creds = Credentials.from_authorized_user_file(GSHEETS_TOKEN_FILE, GSHEETS_SCOPES)
+    if not creds or not creds.valid:
+        if creds and creds.expired and creds.refresh_token:
+            print("[ROSTER] Refreshing Google Sheets access token...")
+            creds.refresh(Request())
+            # Persist refreshed token back to disk
+            with open(GSHEETS_TOKEN_FILE, "w", encoding="utf-8") as f:
+                f.write(creds.to_json())
+        else:
+            raise RuntimeError(
+                "[ROSTER] token.json is missing or invalid. "
+                "It must contain token, refresh_token, client_id, client_secret, token_uri, and scopes."
+            )
+    return creds
+
+
+def load_roster_from_google_sheet():
+    """
+    Load roster names from a Google Sheet:
+    - Spreadsheet: GSHEETS_SPREADSHEET_ID
+    - Sheet: GSHEETS_SHEET_NAME
+    - Column: GSHEETS_COLUMN_HEADER
+    """
+    global ROSTER_NAMES, ROSTER_NORM_MAP
+
+    if not GSHEETS_SPREADSHEET_ID:
+        print("[ROSTER] GSHEETS_SPREADSHEET_ID not set. Skipping Google Sheets load.")
+        return
+
+    try:
+        creds = get_gsheets_creds()
+    except Exception as e:
+        print(f"[ROSTER] Could not get Google Sheets credentials: {e}")
+        return
+
+    try:
+        service = build("sheets", "v4", credentials=creds)
+    except Exception as e:
+        print(f"[ROSTER] Failed to initialize Google Sheets service: {e}")
+        return
+
+    range_name = f"{GSHEETS_SHEET_NAME}!A:Z"  # wide range; we'll find the column by header
+    try:
+        sheet = service.spreadsheets()
+        result = sheet.values().get(
+            spreadsheetId=GSHEETS_SPREADSHEET_ID,
+            range=range_name,
+        ).execute()
+        values = result.get("values", [])
+    except Exception as e:
+        print(f"[ROSTER] Error reading Google Sheet: {e}")
+        return
+
+    if not values:
+        print("[ROSTER] No data found in Google Sheet.")
+        return
+
+    header_row = values[0]
+    try:
+        col_index = header_row.index(GSHEETS_COLUMN_HEADER)
+    except ValueError:
+        print(f"[ROSTER] Column header '{GSHEETS_COLUMN_HEADER}' not found in first row: {header_row}")
+        return
+
+    names = []
+    for row in values[1:]:
+        if len(row) <= col_index:
+            continue
+        val = row[col_index]
+        if val is None:
+            continue
+        name = str(val).strip()
+        if name:
+            names.append(name)
+
+    ROSTER_NAMES = names
+    ROSTER_NORM_MAP = {normalize_for_match(n): n for n in ROSTER_NAMES}
+
+    print(
+        f"[ROSTER] Loaded {len(ROSTER_NAMES)} names from Google Sheet "
+        f"(sheet '{GSHEETS_SHEET_NAME}', column '{GSHEETS_COLUMN_HEADER}')."
+    )
 
 
 def load_roster_from_excel(
@@ -298,12 +408,18 @@ async def find_best_member_for_name(guild: discord.Guild, name_for_match: str):
 async def on_ready():
     print(f"✅ Logged in as {bot.user} (ID: {bot.user.id})")
     print("------")
-    # Load roster from Excel once bot is ready
-    load_roster_from_excel(
-        path="MEMBERLIST.xlsx",
-        sheet_name="Data Validation",
-        column_header="Player IGM",
-    )
+
+    # First try Google Sheets
+    load_roster_from_google_sheet()
+
+    # Optional fallback to local Excel if Sheets fails / is empty
+    if not ROSTER_NAMES:
+        print("[ROSTER] Falling back to local Excel roster.")
+        load_roster_from_excel(
+            path="MEMBERLIST.xlsx",
+            sheet_name="Data Validation",
+            column_header="Player IGM",
+        )
 
 
 @bot.command()
@@ -434,7 +550,6 @@ async def ping(ctx: commands.Context):
         else:
             line = f"`{raw_name}` (no match)"
         unmatched_lines.append(line)
-
 
     MAX_DISPLAY = 60  # total lines (matched + unmatched) to keep things short
     display_matched = matched_lines[:MAX_DISPLAY]
