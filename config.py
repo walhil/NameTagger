@@ -10,6 +10,14 @@ OCR_LANGS = ["en"]
 OCR_MIN_CONF = 0.2
 OCR_SCALE = 2.0
 
+# Loot split options
+SPLIT_TYPES = ["Guild", "Personal", "OffSeason", "Other"]
+EVENT_TYPES = [
+    "Bandit", "Castle", "Chest", "Ganking", "Hellgates", "Hideout",
+    "Mages", "Orb", "Outpost", "Other", "SpecialEvent", "Territory",
+    "Vortex", "DrinkingBeer",
+]
+
 # Google Sheets
 GSHEETS_SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 GSHEETS_SPREADSHEET_ID = os.getenv("GSHEETS_SPREADSHEET_ID")

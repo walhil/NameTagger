@@ -4,7 +4,7 @@ import aiohttp
 import discord
 from discord.ext import commands
 
-from config import DISCORD_TOKEN
+from config import DISCORD_TOKEN, EVENT_TYPES, SPLIT_TYPES
 from ocr import extract_deposit_amounts, extract_market_value, extract_names, run_ocr
 from roster import correct_name, find_member, load_roster
 
@@ -137,9 +137,85 @@ async def ping(ctx: commands.Context):
     await ctx.send(text)
 
 
+class _CallerSelect(discord.ui.UserSelect):
+    def __init__(self):
+        super().__init__(placeholder="Select caller...", row=2)
+
+    async def callback(self, interaction: discord.Interaction):
+        self.view.caller = self.values[0]
+        await interaction.response.edit_message(content=self.view._build_status(), view=self.view)
+
+
+class ScanConfigView(discord.ui.View):
+    def __init__(self, loot_str: str, silver_str: str):
+        super().__init__(timeout=180)
+        self.split_type: str | None = None
+        self.event_type: str | None = None
+        self.caller: discord.Member | None = None
+        self.is_damaged: bool = False
+        self._done = asyncio.Event()
+        self._loot_str = loot_str
+        self._silver_str = silver_str
+        self.add_item(_CallerSelect())
+
+    def _build_status(self) -> str:
+        return (
+            f"**Est. Market Value:** {self._loot_str} silver\n"
+            f"**Total Deposited:** {self._silver_str} silver\n\n"
+            f"**Split Type:** {self.split_type or '—'}\n"
+            f"**Event Type:** {self.event_type or '—'}\n"
+            f"**Caller:** {self.caller.display_name if self.caller else '—'}\n"
+            f"**Loot:** {'Damaged' if self.is_damaged else 'Not Damaged'}"
+        )
+
+    @discord.ui.select(
+        placeholder="Select split type...",
+        options=[discord.SelectOption(label=t) for t in SPLIT_TYPES],
+        row=0,
+    )
+    async def select_split_type(self, interaction: discord.Interaction, select: discord.ui.Select):
+        self.split_type = select.values[0]
+        await interaction.response.edit_message(content=self._build_status(), view=self)
+
+    @discord.ui.select(
+        placeholder="Select event type...",
+        options=[discord.SelectOption(label=t) for t in EVENT_TYPES],
+        row=1,
+    )
+    async def select_event_type(self, interaction: discord.Interaction, select: discord.ui.Select):
+        self.event_type = select.values[0]
+        await interaction.response.edit_message(content=self._build_status(), view=self)
+
+    @discord.ui.button(label="Not Damaged", style=discord.ButtonStyle.green, row=3)
+    async def toggle_damaged(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.is_damaged = not self.is_damaged
+        button.label = "Damaged" if self.is_damaged else "Not Damaged"
+        button.style = discord.ButtonStyle.red if self.is_damaged else discord.ButtonStyle.green
+        await interaction.response.edit_message(content=self._build_status(), view=self)
+
+    @discord.ui.button(label="Confirm", style=discord.ButtonStyle.blurple, row=4)
+    async def confirm(self, interaction: discord.Interaction, _button: discord.ui.Button):
+        missing = [
+            name for name, val in [
+                ("split type", self.split_type),
+                ("event type", self.event_type),
+                ("caller", self.caller),
+            ] if not val
+        ]
+        if missing:
+            await interaction.response.send_message(
+                f"Please select: {', '.join(missing)}.", ephemeral=True
+            )
+            return
+        for item in self.children:
+            item.disabled = True
+        await interaction.response.edit_message(content=self._build_status(), view=self)
+        self._done.set()
+
+
 @bot.command()
 async def scan(ctx: commands.Context):
-    """Scan loot and deposit images posted after the last !ping and output /split-loot arguments."""
+    """Scan loot and deposit images posted after the last !ping, then collect split details."""
     MESSAGE_LIMIT = 100
 
     image_entries = []
@@ -172,27 +248,34 @@ async def scan(ctx: commands.Context):
 
         deposit_amounts.extend(extract_deposit_amounts(results))
 
-    lines = []
+    loot_str = f"{market_value:,}" if market_value is not None else "not found"
+    silver_str = f"{sum(deposit_amounts):,}" if deposit_amounts else "not found"
 
-    if market_value is not None:
-        lines.append(f"**Est. Market Value:** {market_value:,} silver")
-    else:
-        lines.append("**Est. Market Value:** not found")
+    view = ScanConfigView(loot_str, silver_str)
+    await ctx.send(view._build_status(), view=view)
 
-    if deposit_amounts:
-        total_dep = sum(deposit_amounts)
-        if len(deposit_amounts) == 1:
-            lines.append(f"**Total Deposited:** {total_dep:,} silver")
-        else:
-            breakdown = " + ".join(f"{a:,}" for a in deposit_amounts)
-            lines.append(f"**Total Deposited:** {total_dep:,} silver ({breakdown})")
-    else:
-        lines.append("**Total Deposited:** not found")
+    try:
+        await asyncio.wait_for(view._done.wait(), timeout=180)
+    except asyncio.TimeoutError:
+        await ctx.send("Timed out. Run `!scan` again.")
+        return
 
-    if market_value is not None and deposit_amounts:
-        lines.append(f"\n▶ `/split-loot {market_value} {sum(deposit_amounts)}`")
+    loot_val = market_value or 0
+    silver_val = sum(deposit_amounts) if deposit_amounts else 0
+    loot_key = "damaged-loot-total" if view.is_damaged else "non-damaged-loot-total"
+    loot_label = "Damaged loot" if view.is_damaged else "Non-damaged loot"
 
-    await ctx.send("\n".join(lines))
+    summary = (
+        f"**Split Summary**\n"
+        f"Caller: {view.caller.mention}\n"
+        f"Split Type: {view.split_type}\n"
+        f"Event Type: {view.event_type}\n"
+        f"{loot_label}: {loot_val:,} silver\n"
+        f"Silver Bags: {silver_val:,} silver\n\n"
+        f"▶ `/split-loot loot-split-type:{view.split_type} caller-name:{view.caller.display_name} "
+        f"event-type:{view.event_type} {loot_key}:{loot_val} silver-bags-total:{silver_val}`"
+    )
+    await ctx.send(summary)
 
 
 if __name__ == "__main__":
