@@ -1,0 +1,19 @@
+# Environment
+.env
+*.pem
+
+# Google OAuth
+token.json
+client_secret.json
+
+# Local test/debug files
+test_scan.py
+*.png
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# Excel roster
+*.xlsx
