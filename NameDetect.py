@@ -5,7 +5,7 @@ import discord
 from discord.ext import commands
 
 from config import DISCORD_TOKEN, EVENT_TYPES, SPLIT_TYPES
-from ocr import extract_deposit_amounts, extract_market_value, extract_names, run_ocr
+from ocr import extract_deposit_amounts, extract_market_value, extract_names, run_ocr_scan
 from roster import correct_name, find_member, load_roster
 
 intents = discord.Intents.default()
@@ -58,10 +58,12 @@ async def ping(ctx: commands.Context):
 
     await ctx.send(f"Found **{len(image_entries)}** image(s). Running OCR...")
 
+    loop = asyncio.get_event_loop()
     all_names: list[str] = []
     for att in image_entries:
         try:
-            names = extract_names(await _download(att))
+            image_bytes = await _download(att)
+            names = await loop.run_in_executor(None, extract_names, image_bytes)
             all_names.extend(names)
         except Exception as e:
             print(f"[ping] Error on {att.filename}: {e}")
@@ -232,12 +234,14 @@ async def scan(ctx: commands.Context):
 
     await ctx.send(f"Found **{len(image_entries)}** image(s) since last `!ping`. Running OCR...")
 
+    loop = asyncio.get_event_loop()
     market_value: int | None = None
     deposit_amounts: list[int] = []
 
     for att, _ in image_entries:
         try:
-            results = run_ocr(await _download(att))
+            image_bytes = await _download(att)
+            results = await loop.run_in_executor(None, run_ocr_scan, image_bytes)
         except Exception as e:
             print(f"[scan] Error on {att.filename}: {e}")
             continue
@@ -272,7 +276,7 @@ async def scan(ctx: commands.Context):
         f"Event Type: {view.event_type}\n"
         f"{loot_label}: {loot_val:,} silver\n"
         f"Silver Bags: {silver_val:,} silver\n\n"
-        f"▶ `/split-loot loot-split-type:{view.split_type} caller-name:{view.caller.display_name} "
+        f"▶ `/split-loot loot-split-type:{view.split_type} caller-name:@{view.caller.display_name} "
         f"event-type:{view.event_type} {loot_key}:{loot_val} silver-bags-total:{silver_val}`"
     )
     await ctx.send(summary)

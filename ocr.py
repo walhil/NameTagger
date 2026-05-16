@@ -24,6 +24,23 @@ def run_ocr(image_bytes: bytes):
     return _reader.readtext(_preprocess(image_bytes), detail=1)
 
 
+def _preprocess_scan(image_bytes: bytes) -> np.ndarray:
+    """3x scale + binary threshold — better for reading numbers in deposit logs."""
+    nparr = np.frombuffer(image_bytes, np.uint8)
+    img_bgr = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+    if img_bgr is None:
+        raise RuntimeError("Failed to decode image bytes with OpenCV.")
+    img = cv2.resize(img_bgr, None, fx=3.0, fy=3.0, interpolation=cv2.INTER_CUBIC)
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    _, binary = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY)
+    return binary
+
+
+def run_ocr_scan(image_bytes: bytes):
+    """Run OCR with preprocessing tuned for loot and deposit screenshots."""
+    return _reader.readtext(_preprocess_scan(image_bytes), detail=1)
+
+
 # ---- Name extraction ----
 
 def _is_probable_name(text: str) -> bool:
@@ -77,6 +94,9 @@ def extract_names(image_bytes: bytes) -> list[str]:
 
 def parse_silver_amount(text: str) -> int | None:
     text = text.strip().replace(",", "").replace(" ", "")
+    # OCR sometimes reads lowercase 'm' (million) as 'In' or 'in'
+    if text.lower().endswith("in"):
+        text = text[:-2] + "m"
     m = re.match(r"([0-9]+(?:\.[0-9]+)?)[mM]$", text)
     if m:
         return int(round(float(m.group(1)) * 1_000_000))
@@ -92,7 +112,8 @@ def parse_silver_amount(text: str) -> int | None:
 def extract_market_value(ocr_results) -> int | None:
     full_text = " ".join(text for _, text, _ in ocr_results)
     m = re.search(
-        r"[Ee]st[.;,]?\s*[Mm]arke[tr]\s*[Vv]alue\s*[:\s]+[^0-9]*([0-9][0-9,.]*\s*[mkMK]?)",
+        # Allow '_' and other stray punctuation after 'Est', and 'In'/'in' as misread 'm'
+        r"[Ee]st[.;,_]?\s*[Mm]arke[tr]\s*[Vv][ao][ll][uo][eu][:\s]+[^0-9]*([0-9][0-9,.]*\s*(?:[mkMK]|[Ii]n)?)",
         full_text,
     )
     if m:
@@ -103,8 +124,19 @@ def extract_market_value(ocr_results) -> int | None:
 def extract_deposit_amounts(ocr_results) -> list[int]:
     full_text = " ".join(text for _, text, _ in ocr_results)
     amounts = []
-    for m in re.finditer(r"[Dd]epos[a-zA-Z]+\s+([0-9][0-9,.]*)", full_text):
-        amount = parse_silver_amount(m.group(1))
-        if amount is not None:
-            amounts.append(amount)
+    # Find each Deposit keyword, then look for the largest comma-formatted number
+    # after it (skipping the coin icon which OCR reads as a stray digit or '#')
+    for deposit_m in re.finditer(r"[Dd][Ee]?[Pp][Oo][Ss][Ii][Cc]?[Tt]?", full_text):
+        segment = full_text[deposit_m.end():]
+        # Stop at the next deposit entry
+        next_dep = re.search(r"[Dd][Ee]?[Pp][Oo][Ss][Ii][Cc]?[Tt]?", segment)
+        if next_dep:
+            segment = segment[:next_dep.start()]
+        # Find all comma-formatted numbers (e.g. 1,190,000) — excludes bare icon digits
+        candidates = re.findall(r"[0-9]{1,3}(?:,[0-9]{3})+", segment)
+        if candidates:
+            parsed = [parse_silver_amount(n) for n in candidates]
+            parsed = [v for v in parsed if v is not None]
+            if parsed:
+                amounts.append(max(parsed))
     return amounts
