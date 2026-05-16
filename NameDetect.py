@@ -13,8 +13,6 @@ import cv2
 import numpy as np
 
 import difflib
-from openpyxl import load_workbook  # For MEMBERLIST.xlsx
-
 # Google Sheets imports
 from googleapiclient.discovery import build
 from google.auth.transport.requests import Request
@@ -141,9 +139,13 @@ def normalize_ocr_name(text: str) -> str:
     return n
 
 
-def extract_names_from_bytes(image_bytes: bytes):
+def run_ocr_on_bytes(image_bytes: bytes):
     preprocessed = preprocess_for_ocr_from_bytes(image_bytes)
-    results = ocr_reader.readtext(preprocessed, detail=1)
+    return ocr_reader.readtext(preprocessed, detail=1)
+
+
+def extract_names_from_bytes(image_bytes: bytes):
+    results = run_ocr_on_bytes(image_bytes)
 
     print("\n✅ Raw OCR results:")
     for i, (bbox, text, conf) in enumerate(results, start=1):
@@ -169,6 +171,46 @@ def extract_names_from_bytes(image_bytes: bytes):
         unique_names.append(n)
 
     return unique_names
+
+
+# ========= LOOT / DEPOSIT SCAN HELPERS =========
+
+def parse_silver_amount(text: str) -> int | None:
+    """Convert a silver amount string like '3.59 m', '64,000', '500k' to an int."""
+    text = text.strip().replace(",", "").replace(" ", "")
+    m = re.match(r"([0-9]+(?:\.[0-9]+)?)[mM]$", text)
+    if m:
+        return int(round(float(m.group(1)) * 1_000_000))
+    m = re.match(r"([0-9]+(?:\.[0-9]+)?)[kK]$", text)
+    if m:
+        return int(round(float(m.group(1)) * 1_000))
+    m = re.match(r"^([0-9]+)$", text)
+    if m:
+        return int(m.group(1))
+    return None
+
+
+def extract_market_value(ocr_results) -> int | None:
+    """Find 'Est. Market Value' in OCR results and return the parsed silver amount."""
+    full_text = " ".join(text for _, text, _ in ocr_results)
+    m = re.search(
+        r"[Ee]st[.;,]?\s*[Mm]arke[tr]\s*[Vv]alue\s*[:\s]+[^0-9]*([0-9][0-9,.]*\s*[mkMK]?)",
+        full_text,
+    )
+    if m:
+        return parse_silver_amount(m.group(1))
+    return None
+
+
+def extract_deposit_amounts(ocr_results) -> list[int]:
+    """Find 'Deposit' entries in OCR results and return all parsed silver amounts."""
+    full_text = " ".join(text for _, text, _ in ocr_results)
+    amounts = []
+    for m in re.finditer(r"[Dd]epos[a-zA-Z]+\s+([0-9][0-9,.]*)", full_text):
+        amount = parse_silver_amount(m.group(1))
+        if amount is not None:
+            amounts.append(amount)
+    return amounts
 
 
 # ========= MEMBER MATCHING + ROSTER HELPERS =========
@@ -288,64 +330,6 @@ def load_roster_from_google_sheet():
     )
 
 
-def load_roster_from_excel(
-    path: str = "MEMBERLIST.xlsx",
-    sheet_name: str = "Data Validation",
-    column_header: str = "Player IGM",
-):
-    """
-    Load roster names from MEMBERLIST.xlsx:
-    - Sheet: 'Data Validation'
-    - Column: 'Player IGM'
-    """
-    global ROSTER_NAMES, ROSTER_NORM_MAP
-
-    if not os.path.exists(path):
-        print(f"[ROSTER] No Excel file found at {path}. Skipping roster load.")
-        return
-
-    try:
-        wb = load_workbook(path, data_only=True)
-    except Exception as e:
-        print(f"[ROSTER] Failed to open {path}: {e}")
-        return
-
-    if sheet_name not in wb.sheetnames:
-        print(f"[ROSTER] Sheet '{sheet_name}' not found in {path}. Available: {wb.sheetnames}")
-        return
-
-    ws = wb[sheet_name]
-
-    # Find the column index for the given header in the first row
-    header_row = 1
-    col_index = None
-    for cell in ws[header_row]:
-        if str(cell.value).strip() == column_header:
-            col_index = cell.column  # 1-based
-            break
-
-    if col_index is None:
-        print(f"[ROSTER] Column header '{column_header}' not found in sheet '{sheet_name}'.")
-        return
-
-    names = []
-    for row in range(header_row + 1, ws.max_row + 1):
-        cell = ws.cell(row=row, column=col_index)
-        val = cell.value
-        if val is None:
-            continue
-        name = str(val).strip()
-        if name:
-            names.append(name)
-
-    ROSTER_NAMES = names
-    ROSTER_NORM_MAP = {normalize_for_match(n): n for n in ROSTER_NAMES}
-
-    print(
-        f"[ROSTER] Loaded {len(ROSTER_NAMES)} names from {path} "
-        f"(sheet '{sheet_name}', column '{column_header}')."
-    )
-
 
 def correct_with_roster(ocr_name: str, cutoff: float = 0.6) -> str:
     """
@@ -417,17 +401,7 @@ async def on_ready():
     print(f"✅ Logged in as {bot.user} (ID: {bot.user.id})")
     print("------")
 
-    # First try Google Sheets
     load_roster_from_google_sheet()
-
-    # Optional fallback to local Excel if Sheets fails / is empty
-    if not ROSTER_NAMES:
-        print("[ROSTER] Falling back to local Excel roster.")
-        load_roster_from_excel(
-            path="MEMBERLIST.xlsx",
-            sheet_name="Data Validation",
-            column_header="Player IGM",
-        )
 
 
 @bot.command()
@@ -592,6 +566,85 @@ async def ping(ctx: commands.Context):
         text = text[:1990] + "\n…(truncated)"
 
     await ctx.send(text)
+
+
+@bot.command()
+async def scan(ctx: commands.Context):
+    """
+    Scan recent messages for loot and deposit screenshots.
+    Extracts Est. Market Value and guild deposit amounts via OCR,
+    then posts pre-filled /split-loot arguments.
+    """
+    MESSAGE_LIMIT = 100
+
+    image_entries = []
+    async for msg in ctx.channel.history(limit=MESSAGE_LIMIT):
+        # Stop at the most recent !ping — only scan images uploaded after it
+        if msg.content.strip().lower().startswith("!ping"):
+            break
+        if not msg.attachments:
+            continue
+        for attachment in msg.attachments:
+            if (
+                attachment.content_type
+                and attachment.content_type.startswith("image")
+            ) or attachment.filename.lower().endswith((".png", ".jpg", ".jpeg", ".gif", ".webp")):
+                image_entries.append((attachment, msg))
+
+    if not image_entries:
+        await ctx.send("❌ No images found after the last `!ping`.")
+        return
+
+    await ctx.send(f"🔍 Found **{len(image_entries)}** image(s) since last `!ping`. Running OCR...")
+
+    market_value = None
+    deposit_amounts = []
+
+    for attachment, msg in image_entries:
+        try:
+            image_bytes = await download_attachment_bytes(attachment)
+        except Exception as e:
+            print(f"❌ Failed to download {attachment.filename}: {e}")
+            continue
+
+        try:
+            results = run_ocr_on_bytes(image_bytes)
+        except Exception as e:
+            print(f"❌ OCR error on {attachment.filename}: {e}")
+            continue
+
+        mv = extract_market_value(results)
+        if mv is not None:
+            print(f"[SCAN] Market value in {attachment.filename}: {mv:,}")
+            market_value = mv
+
+        deps = extract_deposit_amounts(results)
+        if deps:
+            print(f"[SCAN] Deposits in {attachment.filename}: {deps}")
+            deposit_amounts.extend(deps)
+
+    lines = []
+
+    if market_value is not None:
+        lines.append(f"**Est. Market Value:** {market_value:,} silver")
+    else:
+        lines.append("**Est. Market Value:** not found")
+
+    if deposit_amounts:
+        total_dep = sum(deposit_amounts)
+        if len(deposit_amounts) == 1:
+            lines.append(f"**Total Deposited:** {total_dep:,} silver")
+        else:
+            breakdown = " + ".join(f"{a:,}" for a in deposit_amounts)
+            lines.append(f"**Total Deposited:** {total_dep:,} silver ({breakdown})")
+    else:
+        lines.append("**Total Deposited:** not found")
+
+    if market_value is not None and deposit_amounts:
+        total_dep = sum(deposit_amounts)
+        lines.append(f"\n▶ `/split-loot {market_value} {total_dep}`")
+
+    await ctx.send("\n".join(lines))
 
 
 # -------- Run the bot --------
