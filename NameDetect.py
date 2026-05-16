@@ -24,7 +24,7 @@ load_dotenv()
 
 # ========= OCR CONFIG =========
 LANGS = ["en"]
-MIN_CONF = 0.3
+MIN_CONF = 0.2
 SCALE = 2.0
 # ==============================
 
@@ -178,11 +178,19 @@ def normalize_for_match(s: str) -> str:
     Make string easier to compare:
     - strip spaces
     - lowercase
-    - strip leading non-letters (e.g. '4BDNOLEG' -> 'bdnoleg')
+    - strip leading non-letters
+    - collapse repeated characters to match OCR normalization
     """
     s = s.strip()
     s = re.sub(r"^[^A-Za-z]+", "", s)
-    return s.lower()
+    s = re.sub(r"\s+", "", s)
+    s = s.lower()
+
+    # ✅ Make Discord names comparable to OCR-normalized output
+    # e.g., weeeeeeeey -> weey
+    s = re.sub(r"(.)\1{2,}", r"\1\1", s)
+
+    return s
 
 
 ROSTER_NAMES = []          # raw names from roster
