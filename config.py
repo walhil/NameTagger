@@ -1,0 +1,18 @@
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
+DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
+
+# OCR
+OCR_LANGS = ["en"]
+OCR_MIN_CONF = 0.2
+OCR_SCALE = 2.0
+
+# Google Sheets
+GSHEETS_SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
+GSHEETS_SPREADSHEET_ID = os.getenv("GSHEETS_SPREADSHEET_ID")
+GSHEETS_SHEET_NAME = "Data Validation"
+GSHEETS_COLUMN_HEADER = "Player IGM"
+GSHEETS_TOKEN_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "token.json")

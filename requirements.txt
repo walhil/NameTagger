@@ -1,0 +1,8 @@
+discord.py
+python-dotenv
+easyocr
+opencv-python
+numpy
+aiohttp
+google-api-python-client
+google-auth
