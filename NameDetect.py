@@ -188,11 +188,16 @@ class ScanConfigView(discord.ui.View):
         self.event_type = select.values[0]
         await interaction.response.edit_message(content=self._build_status(), view=self)
 
-    @discord.ui.button(label="Not Damaged", style=discord.ButtonStyle.green, row=3)
-    async def toggle_damaged(self, interaction: discord.Interaction, button: discord.ui.Button):
-        self.is_damaged = not self.is_damaged
-        button.label = "Damaged" if self.is_damaged else "Not Damaged"
-        button.style = discord.ButtonStyle.red if self.is_damaged else discord.ButtonStyle.green
+    @discord.ui.select(
+        placeholder="Select loot condition...",
+        options=[
+            discord.SelectOption(label="Not Damaged", value="not_damaged"),
+            discord.SelectOption(label="Damaged", value="damaged"),
+        ],
+        row=3,
+    )
+    async def select_damaged(self, interaction: discord.Interaction, select: discord.ui.Select):
+        self.is_damaged = select.values[0] == "damaged"
         await interaction.response.edit_message(content=self._build_status(), view=self)
 
     @discord.ui.button(label="Confirm", style=discord.ButtonStyle.blurple, row=4)
