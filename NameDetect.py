@@ -5,8 +5,9 @@ import discord
 from discord.ext import commands
 
 from config import DISCORD_TOKEN, EVENT_TYPES, SPLIT_TYPES
-from ocr import extract_deposit_amounts, extract_market_value, extract_names, run_ocr_scan
+from ocr import extract_names
 from roster import correct_name, find_member, load_roster
+from vision import scan_image
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -237,25 +238,22 @@ async def scan(ctx: commands.Context):
         await ctx.send("No images found after the last `!ping`.")
         return
 
-    await ctx.send(f"Found **{len(image_entries)}** image(s) since last `!ping`. Running OCR...")
+    await ctx.send(f"Found **{len(image_entries)}** image(s) since last `!ping`. Analysing...")
 
-    loop = asyncio.get_event_loop()
     market_value: int | None = None
     deposit_amounts: list[int] = []
 
     for att, _ in image_entries:
         try:
             image_bytes = await _download(att)
-            results = await loop.run_in_executor(None, run_ocr_scan, image_bytes)
+            mv, deps = await scan_image(image_bytes, att.filename)
         except Exception as e:
             print(f"[scan] Error on {att.filename}: {e}")
             continue
 
-        mv = extract_market_value(results)
         if mv is not None:
             market_value = mv
-
-        deposit_amounts.extend(extract_deposit_amounts(results))
+        deposit_amounts.extend(deps)
 
     loot_str = f"{market_value:,}" if market_value is not None else "not found"
     silver_str = f"{sum(deposit_amounts):,}" if deposit_amounts else "not found"

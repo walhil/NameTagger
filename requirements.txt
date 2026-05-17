@@ -1,3 +1,4 @@
+anthropic
 discord.py
 python-dotenv
 easyocr
