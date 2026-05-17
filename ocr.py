@@ -113,7 +113,7 @@ def extract_market_value(ocr_results) -> int | None:
     full_text = " ".join(text for _, text, _ in ocr_results)
     m = re.search(
         # Allow '_' and other stray punctuation after 'Est', and 'In'/'in' as misread 'm'
-        r"[Ee]st[.;,_]?\s*[Mm]arke[tr]\s*[Vv][ao][ll][uo][eu][:\s]+[^0-9]*([0-9][0-9,.]*\s*(?:[mkMK]|[Ii]n)?)",
+        r"[Ee]s[tc][.;,_]?\s*[Mm]arke[tr]\s*[Vv][ao][ll][uo][eu][:\s]+[^0-9]*([0-9][0-9,.]*\s*(?:[mkMK]|[Ii]n)?)",
         full_text,
     )
     if m:
