@@ -147,20 +147,63 @@ class _CallerSelect(discord.ui.UserSelect):
 
     async def callback(self, interaction: discord.Interaction):
         self.view.caller = self.values[0]
-        await interaction.response.edit_message(content=self.view._build_status(), view=self.view)
+        await interaction.response.defer()
+
+
+class OverrideValuesModal(discord.ui.Modal, title="Override Values"):
+    loot_input = discord.ui.TextInput(
+        label="Loot Value (silver)",
+        placeholder="e.g. 8180000",
+        required=False,
+    )
+    deposit_input = discord.ui.TextInput(
+        label="Total Deposited (silver)",
+        placeholder="e.g. 3920000",
+        required=False,
+    )
+
+    def __init__(self, view: "ScanConfigView"):
+        super().__init__()
+        self._view = view
+        if view.market_value is not None:
+            self.loot_input.default = str(view.market_value)
+        if view.silver_total:
+            self.deposit_input.default = str(view.silver_total)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        try:
+            raw = self.loot_input.value.strip().replace(",", "")
+            if raw:
+                self._view.market_value = int(raw)
+        except ValueError:
+            pass
+        try:
+            raw = self.deposit_input.value.strip().replace(",", "")
+            if raw:
+                self._view.silver_total = int(raw)
+        except ValueError:
+            pass
+        self._view._refresh_display()
+        await interaction.response.edit_message(content=self._view._build_status(), view=self._view)
 
 
 class ScanConfigView(discord.ui.View):
-    def __init__(self, loot_str: str, silver_str: str):
+    def __init__(self, market_value: int | None, silver_total: int):
         super().__init__(timeout=180)
         self.split_type: str | None = None
         self.event_type: str | None = None
         self.caller: discord.Member | None = None
         self.is_damaged: bool = False
         self._done = asyncio.Event()
-        self._loot_str = loot_str
-        self._silver_str = silver_str
+        self.market_value = market_value
+        self.silver_total = silver_total
+        self._loot_str = f"{market_value:,}" if market_value is not None else "not found"
+        self._silver_str = f"{silver_total:,}" if silver_total else "not found"
         self.add_item(_CallerSelect())
+
+    def _refresh_display(self) -> None:
+        self._loot_str = f"{self.market_value:,}" if self.market_value is not None else "not found"
+        self._silver_str = f"{self.silver_total:,}" if self.silver_total else "not found"
 
     def _build_status(self) -> str:
         return (
@@ -179,7 +222,7 @@ class ScanConfigView(discord.ui.View):
     )
     async def select_split_type(self, interaction: discord.Interaction, select: discord.ui.Select):
         self.split_type = select.values[0]
-        await interaction.response.edit_message(content=self._build_status(), view=self)
+        await interaction.response.defer()
 
     @discord.ui.select(
         placeholder="Select event type...",
@@ -188,7 +231,7 @@ class ScanConfigView(discord.ui.View):
     )
     async def select_event_type(self, interaction: discord.Interaction, select: discord.ui.Select):
         self.event_type = select.values[0]
-        await interaction.response.edit_message(content=self._build_status(), view=self)
+        await interaction.response.defer()
 
     @discord.ui.select(
         placeholder="Select loot condition...",
@@ -200,7 +243,11 @@ class ScanConfigView(discord.ui.View):
     )
     async def select_damaged(self, interaction: discord.Interaction, select: discord.ui.Select):
         self.is_damaged = select.values[0] == "damaged"
-        await interaction.response.edit_message(content=self._build_status(), view=self)
+        await interaction.response.defer()
+
+    @discord.ui.button(label="Edit Silver Values", style=discord.ButtonStyle.grey, row=4)
+    async def edit_values(self, interaction: discord.Interaction, _button: discord.ui.Button):
+        await interaction.response.send_modal(OverrideValuesModal(self))
 
     @discord.ui.button(label="Confirm", style=discord.ButtonStyle.blurple, row=4)
     async def confirm(self, interaction: discord.Interaction, _button: discord.ui.Button):
@@ -216,9 +263,8 @@ class ScanConfigView(discord.ui.View):
                 f"Please select: {', '.join(missing)}.", ephemeral=True
             )
             return
-        for item in self.children:
-            item.disabled = True
-        await interaction.response.edit_message(content=self._build_status(), view=self)
+        self.clear_items()
+        await interaction.response.edit_message(content="✓ Confirmed.", view=self)
         self._done.set()
 
 
@@ -256,10 +302,9 @@ async def scan(ctx: commands.Context):
             market_value = mv
         deposit_amounts.extend(deps)
 
-    loot_str = f"{market_value:,}" if market_value is not None else "not found"
-    silver_str = f"{sum(deposit_amounts):,}" if deposit_amounts else "not found"
+    silver_total = sum(deposit_amounts) if deposit_amounts else 0
 
-    view = ScanConfigView(loot_str, silver_str)
+    view = ScanConfigView(market_value, silver_total)
     await ctx.send(view._build_status(), view=view)
 
     try:
@@ -268,20 +313,19 @@ async def scan(ctx: commands.Context):
         await ctx.send("Timed out. Run `!scan` again.")
         return
 
-    loot_val = market_value or 0
-    silver_val = sum(deposit_amounts) if deposit_amounts else 0
+    loot_val = view.market_value or 0
+    silver_val = view.silver_total
     loot_key = "damaged-loot-total" if view.is_damaged else "non-damaged-loot-total"
     loot_label = "Damaged loot" if view.is_damaged else "Non-damaged loot"
 
     caller_name = re.sub(r"^!+sl\s*", "", view.caller.display_name, flags=re.IGNORECASE).strip()
 
     summary = (
-        f"**Split Summary**\n"
-        f"Caller: {view.caller.mention}\n"
-        f"Split Type: {view.split_type}\n"
-        f"Event Type: {view.event_type}\n"
-        f"{loot_label}: {loot_val:,} silver\n"
-        f"Silver Bags: {silver_val:,} silver\n\n"
+        f"⚔️ **Split Summary**\n\n"
+        f"> 👤 **Caller:** {view.caller.mention}\n"
+        f"> 🏰 **Event:** {view.split_type} · {view.event_type}\n"
+        f"> 🗡️ **Loot:** {loot_label} · {loot_val:,} silver\n"
+        f"> 💰 **Deposits:** {silver_val:,} silver\n\n"
         f"▶ `/split-loot loot-split-type:{view.split_type} caller-name:@{caller_name} "
         f"event-type:{view.event_type} {loot_key}:{loot_val} silver-bags-total:{silver_val}`"
     )
