@@ -1,4 +1,5 @@
 import asyncio
+import re
 
 import aiohttp
 import discord
@@ -272,6 +273,8 @@ async def scan(ctx: commands.Context):
     loot_key = "damaged-loot-total" if view.is_damaged else "non-damaged-loot-total"
     loot_label = "Damaged loot" if view.is_damaged else "Non-damaged loot"
 
+    caller_name = re.sub(r"^!+sl\s*", "", view.caller.display_name, flags=re.IGNORECASE).strip()
+
     summary = (
         f"**Split Summary**\n"
         f"Caller: {view.caller.mention}\n"
@@ -279,7 +282,7 @@ async def scan(ctx: commands.Context):
         f"Event Type: {view.event_type}\n"
         f"{loot_label}: {loot_val:,} silver\n"
         f"Silver Bags: {silver_val:,} silver\n\n"
-        f"▶ `/split-loot loot-split-type:{view.split_type} caller-name:@{view.caller.display_name} "
+        f"▶ `/split-loot loot-split-type:{view.split_type} caller-name:@{caller_name} "
         f"event-type:{view.event_type} {loot_key}:{loot_val} silver-bags-total:{silver_val}`"
     )
     await ctx.send(summary)
