@@ -3,7 +3,7 @@ import re
 
 import anthropic
 
-from config import ANTHROPIC_API_KEY
+from .config import ANTHROPIC_API_KEY
 
 _client = anthropic.AsyncAnthropic(api_key=ANTHROPIC_API_KEY)
 MODEL = "claude-haiku-4-5-20251001"

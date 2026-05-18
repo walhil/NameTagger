@@ -5,10 +5,10 @@ import aiohttp
 import discord
 from discord.ext import commands
 
-from config import DISCORD_TOKEN, EVENT_TYPES, SPLIT_TYPES
-from ocr import extract_names
-from roster import correct_name, find_member, load_roster
-from vision import scan_image
+from .config import DISCORD_TOKEN, EVENT_TYPES, SPLIT_TYPES
+from .ocr import extract_names
+from .roster import correct_name, find_member, load_roster
+from .vision import scan_image
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -286,9 +286,3 @@ async def scan(ctx: commands.Context):
         f"event-type:{view.event_type} {loot_key}:{loot_val} silver-bags-total:{silver_val}`"
     )
     await ctx.send(summary)
-
-
-if __name__ == "__main__":
-    if not DISCORD_TOKEN:
-        raise RuntimeError("DISCORD_TOKEN environment variable is not set.")
-    bot.run(DISCORD_TOKEN)
