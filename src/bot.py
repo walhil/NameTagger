@@ -3,12 +3,14 @@ import re
 
 import aiohttp
 import discord
-from discord.ext import commands
+from discord.ext import commands, tasks
 
 from .config import DISCORD_TOKEN, EVENT_TYPES, SPLIT_TYPES
 from .ocr import extract_names
 from .roster import correct_name, find_member, load_roster
 from .vision import scan_image
+
+ROSTER_REFRESH_HOURS = 3
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -34,10 +36,23 @@ def _is_image(attachment) -> bool:
     ) or attachment.filename.lower().endswith((".png", ".jpg", ".jpeg", ".gif", ".webp"))
 
 
+@tasks.loop(hours=ROSTER_REFRESH_HOURS)
+async def _refresh_roster_loop():
+    load_roster()
+
+
 @bot.event
 async def on_ready():
     print(f"Logged in as {bot.user} (ID: {bot.user.id})")
+    if not _refresh_roster_loop.is_running():
+        _refresh_roster_loop.start()
+
+
+@bot.command()
+async def refreshroster(ctx: commands.Context):
+    """Reload the player roster from Google Sheets immediately."""
     load_roster()
+    await ctx.send("Roster reloaded from Google Sheets.")
 
 
 @bot.command()
