@@ -18,6 +18,12 @@ from .config import (
 _roster_names: list[str] = []
 _roster_norm_map: dict[str, str] = {}
 
+_OCR_DENYLIST: frozenset[str] = frozenset({
+    "name", "search", "tier", "category", "actions", "equip", "sort",
+    "repair", "move", "all", "item", "items", "select", "loadout",
+    "weight", "durability", "quality", "value", "type", "slot",
+})
+
 
 def _normalize(s: str) -> str:
     s = re.sub(r"^[^A-Za-z]+", "", s.strip())
@@ -88,14 +94,14 @@ def load_roster() -> None:
     print(f"[ROSTER] Loaded {len(_roster_names)} names from Google Sheets.")
 
 
-def correct_name(ocr_name: str, cutoff: float = 0.6) -> str:
+def correct_name(ocr_name: str, cutoff: float = 0.6) -> str | None:
     if not _roster_norm_map:
         return ocr_name
     target = _normalize(ocr_name)
-    if not target:
-        return ocr_name
+    if not target or target in _OCR_DENYLIST:
+        return None
     best = difflib.get_close_matches(target, list(_roster_norm_map), n=1, cutoff=cutoff)
-    if best:
+    if best and len(target) >= len(best[0]) * 0.5:
         corrected = _roster_norm_map[best[0]]
         print(f"[ROSTER] {ocr_name!r} -> {corrected!r}")
         return corrected

@@ -101,6 +101,8 @@ async def ping(ctx: commands.Context):
 
     for n in unique_names:
         corrected = correct_name(n)
+        if corrected is None:
+            continue
         member = await find_member(ctx.guild, corrected)
         if member:
             entry = member_hits.setdefault(
