@@ -5,7 +5,7 @@ import aiohttp
 import discord
 from discord.ext import commands, tasks
 
-from .config import DISCORD_TOKEN, EVENT_TYPES, SPLIT_TYPES
+from .config import DISCORD_TOKEN, EVENT_TYPES, MEMBER_ROLE, SPLIT_TYPES
 from .ocr import extract_names
 from .roster import correct_name, find_member, load_roster
 from .vision import scan_image
@@ -104,7 +104,7 @@ async def ping(ctx: commands.Context):
         if corrected is None:
             continue
         member = await find_member(ctx.guild, corrected)
-        if member:
+        if member and any(r.name == MEMBER_ROLE for r in member.roles):
             entry = member_hits.setdefault(
                 member.id, {"member": member, "raw": set(), "corrected": set()}
             )

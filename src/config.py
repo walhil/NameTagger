@@ -19,6 +19,9 @@ EVENT_TYPES = [
     "Vortex", "DrinkingBeer",
 ]
 
+# Discord
+MEMBER_ROLE = "Member"
+
 # Google Sheets
 GSHEETS_SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 GSHEETS_SPREADSHEET_ID = os.getenv("GSHEETS_SPREADSHEET_ID")

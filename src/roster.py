@@ -94,7 +94,7 @@ def load_roster() -> None:
     print(f"[ROSTER] Loaded {len(_roster_names)} names from Google Sheets.")
 
 
-def correct_name(ocr_name: str, cutoff: float = 0.6) -> str | None:
+def correct_name(ocr_name: str, cutoff: float = 0.65) -> str | None:
     if not _roster_norm_map:
         return ocr_name
     target = _normalize(ocr_name)
