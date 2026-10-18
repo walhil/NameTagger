@@ -1,7 +1,9 @@
 services:
   nametagger:
+    # Published by .github/workflows/docker.yml on every push to main.
+    # `docker compose pull` fetches it; `docker compose up --build` builds locally instead.
+    image: ghcr.io/walhil/nametagger:latest
     build: .
-    image: nametagger:latest
     container_name: nametagger
     restart: unless-stopped
     env_file: .env

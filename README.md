@@ -41,6 +41,8 @@ src/
 requirements.txt
 Dockerfile            # Container image (CPU-only PyTorch, EasyOCR models built in)
 docker-compose.yml    # Runs the bot; mounts ./data for token.json
+.github/workflows/
+  docker.yml          # Builds and publishes the image to ghcr.io on push to main
 README.md
 ```
 
@@ -104,21 +106,24 @@ python main.py
 
 ### Docker Compose (recommended)
 
-Requires Docker with the Compose plugin.
+Requires Docker with the Compose plugin. A prebuilt image is published to `ghcr.io/walhil/nametagger:latest` on every push to `main`, so the server doesn't need the source code.
 
 ```bash
-git clone https://github.com/walhil/NameTagger.git && cd NameTagger
+mkdir NameTagger && cd NameTagger
 
-# 1. Create .env (see "Environment variables" above)
+# 1. Download the compose file
+curl -fsSLO https://raw.githubusercontent.com/walhil/NameTagger/main/docker-compose.yml
+
+# 2. Create .env (see "Environment variables" above)
 nano .env
 
-# 2. Put token.json in ./data (the container runs as UID 1000 and must be able to write it)
+# 3. Put token.json in ./data (the container runs as UID 1000 and must be able to write it)
 mkdir -p data
 cp /path/to/token.json data/
 sudo chown -R 1000:1000 data
 
-# 3. Build and start
-docker compose up -d --build
+# 4. Pull and start
+docker compose pull && docker compose up -d
 ```
 
 Useful commands:
@@ -127,11 +132,13 @@ Useful commands:
 |---|---|
 | `docker compose logs -f` | Follow bot logs |
 | `docker compose restart` | Restart the bot |
-| `git pull && docker compose up -d --build` | Update to the latest code |
+| `docker compose pull && docker compose up -d` | Update to the latest image |
 | `docker compose down` | Stop and remove the container |
 
+To build the image yourself instead, clone the repo and run `docker compose up -d --build`.
+
 Notes:
-- The image uses CPU-only PyTorch and has the EasyOCR models built in. The first build takes several minutes, and the image is about 3 GB.
+- The image uses CPU-only PyTorch and has the EasyOCR models built in. It's about 3 GB, and a local build takes several minutes.
 - The container needs ~1 GB of RAM at runtime (see the swap note below for small VPSes).
 - `.env`, `token.json`, and `*.pem` are excluded from the image via `.dockerignore`.
 
