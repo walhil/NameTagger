@@ -6,7 +6,7 @@ import anthropic
 from .config import ANTHROPIC_API_KEY
 
 _client = anthropic.AsyncAnthropic(api_key=ANTHROPIC_API_KEY)
-MODEL = "claude-haiku-4-5-20251001"
+MODEL = "claude-haiku-5-5"
 
 
 def _media_type(filename: str) -> str:
@@ -22,7 +22,8 @@ def _media_type(filename: str) -> str:
 async def _invoke(prompt: str, image_bytes: bytes, filename: str) -> str:
     msg = await _client.messages.create(
         model=MODEL,
-        max_tokens=256,
+        max_tokens=1024,
+        output_config={"effort": "low"},
         messages=[
             {
                 "role": "user",
@@ -40,7 +41,7 @@ async def _invoke(prompt: str, image_bytes: bytes, filename: str) -> str:
             }
         ],
     )
-    return msg.content[0].text.strip()
+    return "".join(b.text for b in msg.content if b.type == "text").strip()
 
 
 async def scan_image(image_bytes: bytes, filename: str) -> tuple[int | None, list[int]]:
