@@ -6,6 +6,9 @@
 token.json
 client_secret.json
 
+# Docker volume (holds token.json)
+data/
+
 # Local test/debug files
 test_*.py
 *.png

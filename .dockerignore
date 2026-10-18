@@ -1,0 +1,15 @@
+# Secrets — never bake into the image
+.env
+*.pem
+token.json
+client_secret.json
+data/
+
+# Local/dev files
+.git
+.venv/
+__pycache__/
+*.pyc
+test_*.py
+*.png
+*.xlsx

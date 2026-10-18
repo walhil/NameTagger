@@ -1,0 +1,17 @@
+services:
+  nametagger:
+    build: .
+    image: nametagger:latest
+    container_name: nametagger
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      GSHEETS_TOKEN_FILE: /app/data/token.json
+    volumes:
+      # token.json lives here; the bot rewrites it when the access token refreshes
+      - ./data:/app/data
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

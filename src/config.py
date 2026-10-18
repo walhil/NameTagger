@@ -28,6 +28,7 @@ GSHEETS_SPREADSHEET_ID = os.getenv("GSHEETS_SPREADSHEET_ID")
 GSHEETS_SHEET_NAME = "Data Validation"
 GSHEETS_COLUMN_HEADER = "Player IGM"
 
-# token.json lives in the project root, one level above src/
+# token.json defaults to the project root, one level above src/.
+# Override with GSHEETS_TOKEN_FILE (e.g. a mounted volume in Docker).
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-GSHEETS_TOKEN_FILE = os.path.join(BASE_DIR, "token.json")
+GSHEETS_TOKEN_FILE = os.getenv("GSHEETS_TOKEN_FILE", os.path.join(BASE_DIR, "token.json"))

@@ -39,6 +39,8 @@ src/
   roster.py           # Google Sheets roster loading and member matching
   vision.py           # Claude vision API for loot/deposit value extraction
 requirements.txt
+Dockerfile            # Container image (CPU-only PyTorch, EasyOCR models built in)
+docker-compose.yml    # Runs the bot; mounts ./data for token.json
 README.md
 ```
 
@@ -100,7 +102,42 @@ python main.py
 
 ## Deployment
 
-The bot is designed to run as a `systemd` service on Linux.
+### Docker Compose (recommended)
+
+Requires Docker with the Compose plugin.
+
+```bash
+git clone https://github.com/walhil/NameTagger.git && cd NameTagger
+
+# 1. Create .env (see "Environment variables" above)
+nano .env
+
+# 2. Put token.json in ./data (the container runs as UID 1000 and must be able to write it)
+mkdir -p data
+cp /path/to/token.json data/
+sudo chown -R 1000:1000 data
+
+# 3. Build and start
+docker compose up -d --build
+```
+
+Useful commands:
+
+| Command | Description |
+|---|---|
+| `docker compose logs -f` | Follow bot logs |
+| `docker compose restart` | Restart the bot |
+| `git pull && docker compose up -d --build` | Update to the latest code |
+| `docker compose down` | Stop and remove the container |
+
+Notes:
+- The image uses CPU-only PyTorch and has the EasyOCR models built in. The first build takes several minutes, and the image is about 3 GB.
+- The container needs ~1 GB of RAM at runtime (see the swap note below for small VPSes).
+- `.env`, `token.json`, and `*.pem` are excluded from the image via `.dockerignore`.
+
+### systemd
+
+The bot can also run as a `systemd` service on Linux.
 
 Example unit file (`/etc/systemd/system/discord-bot.service`):
 
