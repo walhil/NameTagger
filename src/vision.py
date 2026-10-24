@@ -7,6 +7,8 @@ from .config import ANTHROPIC_API_KEY
 
 _client = anthropic.AsyncAnthropic(api_key=ANTHROPIC_API_KEY)
 MODEL = "claude-haiku-5-5"
+EFFORT = "low"
+MAX_TOKENS = 1024
 
 
 def _media_type(filename: str) -> str:
@@ -22,8 +24,8 @@ def _media_type(filename: str) -> str:
 async def _invoke(prompt: str, image_bytes: bytes, filename: str) -> str:
     msg = await _client.messages.create(
         model=MODEL,
-        max_tokens=1024,
-        output_config={"effort": "low"},
+        max_tokens=MAX_TOKENS,
+        output_config={"effort": EFFORT},
         messages=[
             {
                 "role": "user",
