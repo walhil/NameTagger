@@ -1,3 +1,4 @@
+import difflib
 import re
 
 import cv2
@@ -66,12 +67,52 @@ def _normalize_name(text: str) -> str:
     return n[0].upper() + n[1:]
 
 
-def extract_names(image_bytes: bytes) -> list[str]:
+# UI labels from the bank/inventory screen. OCR mangles these a lot ("Move Aii",
+# "RepalrAI", "Tler"), so each OCR box is fuzzy-matched against them, and several
+# distinct labels must hit so a player who happens to be named "Stack" can't flag a party list.
+_LOOT_MARKERS = (
+    "marketvalue", "moveall", "repairall", "selectloadout", "equip",
+    "search", "tier", "category", "sort", "stack", "bank", "actions",
+)
+_LOOT_MIN_HITS = 3
+_DEPOSIT_MARKERS = ("deposit", "withdrawal")
+
+
+def _squash(text: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", text.lower())
+
+
+def _fuzzy_hit(box: str, marker: str) -> bool:
+    return marker in box or difflib.SequenceMatcher(None, box, marker).ratio() >= 0.75
+
+
+def detect_non_party(ocr_results) -> str | None:
+    """Return 'loot' or 'deposit' if the OCR text looks like one of those screens, else None."""
+    boxes = [_squash(t) for _, t, _ in ocr_results]
+    boxes = [b for b in boxes if b]
+    if any(_fuzzy_hit(b, m) for b in boxes for m in _DEPOSIT_MARKERS):
+        return "deposit"
+    hits = sum(any(_fuzzy_hit(b, m) for b in boxes) for m in _LOOT_MARKERS)
+    if hits >= _LOOT_MIN_HITS:
+        return "loot"
+    return None
+
+
+def extract_names(image_bytes: bytes) -> tuple[list[str], str | None]:
+    """
+    Return (names, skipped_kind). skipped_kind is 'loot' or 'deposit' when the image
+    is not a party list, in which case names is empty.
+    """
     results = run_ocr(image_bytes)
 
     print("Raw OCR results:")
     for i, (_, text, conf) in enumerate(results, start=1):
         print(f"  {i}. [{conf:.2f}] {text}")
+
+    kind = detect_non_party(results)
+    if kind:
+        print(f"Skipping image: looks like a {kind} screenshot, not a party list.")
+        return [], kind
 
     names = []
     for _, text, conf in results:
@@ -87,7 +128,7 @@ def extract_names(image_bytes: bytes) -> list[str]:
         if n.lower() not in seen:
             seen.add(n.lower())
             unique.append(n)
-    return unique
+    return unique, None
 
 
 # ---- Loot / deposit extraction ----

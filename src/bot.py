@@ -77,13 +77,22 @@ async def ping(ctx: commands.Context):
 
     loop = asyncio.get_event_loop()
     all_names: list[str] = []
+    skipped = 0
     for att in image_entries:
         try:
             image_bytes = await _download(att)
-            names = await loop.run_in_executor(None, extract_names, image_bytes)
+            names, skipped_kind = await loop.run_in_executor(None, extract_names, image_bytes)
+            if skipped_kind:
+                skipped += 1
             all_names.extend(names)
         except Exception as e:
             print(f"[ping] Error on {att.filename}: {e}")
+
+    if skipped:
+        await ctx.send(
+            f"Skipped **{skipped}** loot/deposit image(s). `!scan` only reads images posted "
+            f"after `!ping`, so re-post those after this message."
+        )
 
     if not all_names:
         await ctx.send("Could not detect any names from the images.")
@@ -144,7 +153,7 @@ async def ping(ctx: commands.Context):
     extra_matched = len(matched_lines) - len(display_matched)
     extra_unmatched = len(unmatched_lines) - len(display_unmatched)
 
-    parts = [f"**Matched {len(member_hits)} player(s) from {len(image_entries)} image(s).**"]
+    parts = [f"**Matched {len(member_hits)} player(s) from {len(image_entries) - skipped} image(s).**"]
     if display_matched:
         parts += ["\n**Matched:**"] + display_matched
     if display_unmatched:
