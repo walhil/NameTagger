@@ -18,6 +18,10 @@ intents.members = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
+# channel id -> (!ping message id, [(attachment, message)]): loot/deposit images that
+# !ping skipped, handed to the next !scan if it runs against that same !ping.
+_carried_to_scan: dict[int, tuple[int, list[tuple]]] = {}
+
 
 async def _download(attachment, retries: int = 3, delay: float = 1.0) -> bytes:
     for attempt in range(1, retries + 1):
@@ -62,12 +66,16 @@ async def ping(ctx: commands.Context):
 
     await ctx.send(f"Scanning the last {MESSAGE_LIMIT} messages for party images...")
 
-    image_entries = [
-        att
-        async for msg in ctx.channel.history(limit=MESSAGE_LIMIT)
-        for att in msg.attachments
-        if _is_image(att)
-    ]
+    # (attachment, message, is_current_run). Images older than the last !scan belong
+    # to a previous split, so they are never carried over to this run's !scan.
+    image_entries = []
+    is_current_run = True
+    async for msg in ctx.channel.history(limit=MESSAGE_LIMIT):
+        if msg.id != ctx.message.id and msg.content.strip().lower().startswith("!scan"):
+            is_current_run = False
+        for att in msg.attachments:
+            if _is_image(att):
+                image_entries.append((att, msg, is_current_run))
 
     if not image_entries:
         await ctx.send("No image attachments found in recent messages.")
@@ -78,20 +86,25 @@ async def ping(ctx: commands.Context):
     loop = asyncio.get_event_loop()
     all_names: list[str] = []
     skipped = 0
-    for att in image_entries:
+    carried: list[tuple] = []
+    for att, msg, current in image_entries:
         try:
             image_bytes = await _download(att)
             names, skipped_kind = await loop.run_in_executor(None, extract_names, image_bytes)
             if skipped_kind:
                 skipped += 1
+                if current:
+                    carried.append((att, msg))
             all_names.extend(names)
         except Exception as e:
             print(f"[ping] Error on {att.filename}: {e}")
 
-    if skipped:
+    _carried_to_scan[ctx.channel.id] = (ctx.message.id, carried)
+
+    if carried:
         await ctx.send(
-            f"Skipped **{skipped}** loot/deposit image(s). `!scan` only reads images posted "
-            f"after `!ping`, so re-post those after this message."
+            f"Skipped **{len(carried)}** loot/deposit image(s) posted before `!ping`. "
+            f"They'll be included in `!scan`, so there's no need to re-post them."
         )
 
     if not all_names:
@@ -300,18 +313,31 @@ async def scan(ctx: commands.Context):
     MESSAGE_LIMIT = 100
 
     image_entries = []
+    ping_msg_id = None
     async for msg in ctx.channel.history(limit=MESSAGE_LIMIT):
         if msg.content.strip().lower().startswith("!ping"):
+            ping_msg_id = msg.id
             break
         for att in msg.attachments:
             if _is_image(att):
                 image_entries.append((att, msg))
 
+    # Loot/deposit images posted before !ping (which !ping skipped). Appended last so
+    # the order stays newest-first, matching the history walk above.
+    carried_ping_id, carried = _carried_to_scan.get(ctx.channel.id, (None, []))
+    if carried and carried_ping_id == ping_msg_id:
+        image_entries.extend(carried)
+    else:
+        carried = []
+
     if not image_entries:
         await ctx.send("No images found after the last `!ping`.")
         return
 
-    await ctx.send(f"Found **{len(image_entries)}** image(s) since last `!ping`. Analysing...")
+    found = f"Found **{len(image_entries)}** image(s)"
+    if carried:
+        found += f" ({len(carried)} posted before `!ping`)"
+    await ctx.send(f"{found}. Analysing...")
 
     market_value: int | None = None
     deposit_amounts: list[int] = []
